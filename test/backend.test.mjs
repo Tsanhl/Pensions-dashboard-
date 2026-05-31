@@ -50,6 +50,24 @@ test("agent returns next best action and assistant context", () => {
   assert.ok(!summary.actionCandidates.some((action) => action.sourceKey === "target_gap_open"));
 });
 
+test("agent next best action ignores completed tasks", () => {
+  const summary = buildAgentSummaryForDashboard({
+    dashboard,
+    riskProfile: { completed: false },
+    existingActions: [
+      {
+        id: "done-doc",
+        sourceKey: "document_review_required",
+        status: "done",
+        priority: "high",
+        title: "Confirm uploaded document facts"
+      }
+    ]
+  });
+  assert.equal(summary.nextBestAction.sourceKey, "manual_account_review");
+  assert.ok(!summary.notificationCandidates.some((candidate) => candidate.sourceKey === "document_review_required"));
+});
+
 test("compliance metadata keeps advice boundary explicit", () => {
   const meta = complianceMetadata({
     provider: "groq",

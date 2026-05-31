@@ -49,10 +49,17 @@ export function syncNotificationsFromAgent(userId, summary) {
     if (dismissed) continue;
     const existing = notifications.find((notification) => notification.sourceKey === candidate.sourceKey);
     if (existing) {
-      if (existing.title !== candidate.title || existing.body !== candidate.body || existing.priority !== candidate.priority) {
+      const nextChannels = channelsFor(preferences, candidate);
+      if (
+        existing.title !== candidate.title ||
+        existing.body !== candidate.body ||
+        existing.priority !== candidate.priority ||
+        JSON.stringify(existing.channels || []) !== JSON.stringify(nextChannels)
+      ) {
         existing.title = candidate.title;
         existing.body = candidate.body || "";
         existing.priority = candidate.priority || "medium";
+        existing.channels = nextChannels;
         existing.updatedAt = isoNow();
         changed = true;
       }

@@ -82,6 +82,11 @@ function buildAssistantContext({ dashboard, riskProfile, checks, nextBestAction 
   };
 }
 
+function actionStillOpen(existingActions = [], candidate) {
+  const existing = existingActions.find((action) => action.sourceKey === candidate.sourceKey);
+  return !existing || existing.status === "open";
+}
+
 export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, existingActions = [], now = new Date() } = {}) {
   const checks = [];
   const accounts = Array.isArray(dashboard?.pensionAccounts) ? dashboard.pensionAccounts : [];
@@ -225,8 +230,9 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
     .map(actionCandidateFromCheck);
   const notificationCandidates = checks
     .filter((item) => item.meta?.actionable !== false && (item.severity === "high" || item.severity === "medium"))
-    .map(notificationCandidateFromCheck);
-  const candidateActions = sortActions(actionCandidates.map((candidate) => ({
+    .map(notificationCandidateFromCheck)
+    .filter((candidate) => actionStillOpen(existingActions, candidate));
+  const candidateActions = sortActions(actionCandidates.filter((candidate) => actionStillOpen(existingActions, candidate)).map((candidate) => ({
     ...candidate,
     id: candidate.sourceKey,
     status: "open",
