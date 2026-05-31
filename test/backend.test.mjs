@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAgentSummaryForDashboard } from "../server/services/agentService.js";
-import { escalateActionsForAssistantQuestion, syncActionsFromAgent } from "../server/services/actionService.js";
+import { escalateActionsForAssistantQuestion, questionDependencyWarning, syncActionsFromAgent } from "../server/services/actionService.js";
 import { createSession, getSession, startMfaChallenge, verifyMfaChallenge } from "../server/services/authService.js";
 import { complianceMetadata } from "../server/services/complianceService.js";
 import { requestDataDeletion, listDeletionRequests, updateDeletionRequest } from "../server/services/adminWorkflowService.js";
@@ -206,6 +206,7 @@ test("open actions escalate by age and dependent assistant questions", () => {
   assert.ok(escalated.some((action) => action.id === "fresh-medium"));
   actions = readActions(userId);
   assert.equal(actions.find((action) => action.id === "fresh-medium").priority, "high");
+  assert.match(questionDependencyWarning(userId, "Should I transfer or change investment funds using this manual account data?"), /Before relying on this answer/);
   assert.ok(listNotifications(userId, { status: "all" }).some((notification) => notification.source === "action_escalation" && notification.priority === "high"));
   assert.ok(listNotificationDeliveries(userId, { status: "queued" }).some((delivery) => delivery.channel === "email_summary"));
 });

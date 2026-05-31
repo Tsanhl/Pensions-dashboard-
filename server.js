@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { buildAssistantInstructions } from "./server/prompts/assistantGuide.js";
 import { getVerifiedDashboardContext, getDocumentScanContext, getPortfolioSeedForUser } from "./server/portfolioStore.js";
 import { handleProductApiRoute } from "./server/routes/productApiRoutes.js";
-import { escalateActionsForAssistantQuestion } from "./server/services/actionService.js";
+import { escalateActionsForAssistantQuestion, questionDependencyWarning } from "./server/services/actionService.js";
 import { runAgentForUser } from "./server/services/agentService.js";
 import { findSessionByToken } from "./server/services/authService.js";
 import { addDocumentConfidence, storeScannedDocument } from "./server/services/documentService.js";
@@ -798,7 +798,10 @@ function cleanAssistantAnswer(answer, context = {}) {
 }
 
 function appendDataUsedSection(answer, dashboard, meta = {}) {
-  return cleanAssistantAnswer(answer, { question: meta.question || "", dashboard, usedSearch: Boolean(meta.usedSearch), currentSourceNote: meta.currentSourceNote || "" });
+  const cleaned = cleanAssistantAnswer(answer, { question: meta.question || "", dashboard, usedSearch: Boolean(meta.usedSearch), currentSourceNote: meta.currentSourceNote || "" });
+  const warning = String(meta.dependencyWarning || "").trim();
+  if (!warning || cleaned.toLowerCase().startsWith(warning.toLowerCase())) return cleaned;
+  return `${warning}\n\n${cleaned}`;
 }
 
 function portfolioInvestmentSuggestion({ style = "balanced", dashboard, question = "", settings = {} }) {
@@ -1028,6 +1031,7 @@ async function handleAssistant(req, res) {
   const model = safeModelName(provider, body.model || body.settings?.model || process.env[PROVIDERS[provider]?.envModel] || "");
   const agentSummary = runAgentForUser({ userId, persist: true, reason: "assistant_context" });
   const escalatedActions = escalateActionsForAssistantQuestion(userId, question);
+  const dependencyWarning = questionDependencyWarning(userId, question);
   if (escalatedActions.length) {
     appendAuditEvent(userId, {
       type: "action_priority_escalated",
@@ -1064,7 +1068,7 @@ async function handleAssistant(req, res) {
       questionPreview: question.slice(0, 160)
     });
     return json(res, 200, {
-      answer: appendDataUsedSection(fallback, dashboard, { provider: "local", usedSearch: false, currentSourceNote: fallbackSourceNote, investmentReview: settings.investmentReview, question }),
+      answer: appendDataUsedSection(fallback, dashboard, { provider: "local", usedSearch: false, currentSourceNote: fallbackSourceNote, investmentReview: settings.investmentReview, question, dependencyWarning }),
       model: "server-portfolio-linked",
       provider: "local",
       usedSearch: false,
@@ -1095,7 +1099,7 @@ async function handleAssistant(req, res) {
       questionPreview: question.slice(0, 160)
     });
     return json(res, 200, {
-      answer: appendDataUsedSection(result.answer, dashboard, { provider: result.provider, usedSearch: result.usedSearch, currentSourceNote, investmentReview: settings.investmentReview, question }),
+      answer: appendDataUsedSection(result.answer, dashboard, { provider: result.provider, usedSearch: result.usedSearch, currentSourceNote, investmentReview: settings.investmentReview, question, dependencyWarning }),
       model: result.model,
       provider: result.provider,
       usedSearch: result.usedSearch,
@@ -1120,7 +1124,7 @@ async function handleAssistant(req, res) {
       questionPreview: question.slice(0, 160)
     });
     return json(res, 200, {
-      answer: appendDataUsedSection(fallback, dashboard, { provider: "local", usedSearch: false, currentSourceNote: note, investmentReview: settings.investmentReview, question }),
+      answer: appendDataUsedSection(fallback, dashboard, { provider: "local", usedSearch: false, currentSourceNote: note, investmentReview: settings.investmentReview, question, dependencyWarning }),
       model: "server-portfolio-linked",
       provider: "local",
       usedSearch: false,

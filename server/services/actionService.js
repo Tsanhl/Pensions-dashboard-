@@ -100,6 +100,29 @@ function questionRelevantToAction(question = "", action = {}) {
   return false;
 }
 
+function actionRequiresUserData(action = {}) {
+  const combined = `${action.category || ""} ${action.sourceKey || ""} ${action.title || ""} ${action.detail || ""}`.toLowerCase();
+  return /\b(documents?|data_quality|manual|statement|upload|confirm|missing|stale|provider)\b/.test(combined);
+}
+
+export function questionDependencyActions(userId, question = "") {
+  return sortActions(readActions(userId).filter((action) => (
+    action.status === "open" &&
+    actionRequiresUserData(action) &&
+    questionRelevantToAction(question, action)
+  )));
+}
+
+export function questionDependencyWarning(userId, question = "") {
+  const actions = questionDependencyActions(userId, question);
+  if (!actions.length) return "";
+  const titles = actions
+    .slice(0, 2)
+    .map((action) => String(action.title || "the open data task").replace(/[.]+$/g, "").toLowerCase());
+  const taskText = titles.length === 1 ? titles[0] : `${titles[0]} and ${titles[1]}`;
+  return `Before relying on this answer, complete this data task first: ${taskText}.`;
+}
+
 export function sortActions(actions = []) {
   return [...actions].sort((a, b) => {
     const priority = (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9);
