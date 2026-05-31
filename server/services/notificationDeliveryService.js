@@ -109,14 +109,25 @@ async function sendWithSendGrid(delivery) {
   if (!response.ok) throw new Error(`SendGrid failed with status ${response.status}`);
 }
 
+function plainEmailText(value = "", fallback = "") {
+  return String(value || fallback)
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
 function deliverySubject(delivery) {
-  return String(delivery.title || "Urgent pension dashboard task").trim();
+  return plainEmailText(delivery.title, "Urgent pension dashboard task");
 }
 
 function deliveryMessage(delivery) {
   const title = deliverySubject(delivery);
-  const body = String(delivery.body || "Open the dashboard to review this urgent pension task.").trim();
-  const view = String(delivery.linkedView || "overview").trim();
+  const body = plainEmailText(delivery.body, "Open the dashboard to review this urgent pension task.");
+  const view = plainEmailText(delivery.linkedView, "overview");
   return `${title}\n\n${body}\n\nOpen dashboard section: ${view}`;
 }
 
@@ -136,8 +147,9 @@ async function sendWithEmailJs(delivery) {
       subject,
       title: subject,
       message,
-      alert_title: delivery.title,
-      alert_body: delivery.body,
+      message_plain: message,
+      alert_title: subject,
+      alert_body: plainEmailText(delivery.body, "Open the dashboard to review this urgent pension task."),
       linked_view: delivery.linkedView || "overview"
     }
   };

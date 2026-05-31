@@ -8,12 +8,25 @@ import {
 } from "../store/userDataStore.js";
 import { queueNotificationDelivery } from "./notificationDeliveryService.js";
 
+function isUrgentTaskNotification(notification = {}) {
+  if ((notification.priority || "medium") !== "high") return false;
+  const combined = [
+    notification.category,
+    notification.preferenceKey,
+    notification.source,
+    notification.sourceKey,
+    notification.title,
+    notification.body,
+    notification.detail
+  ].join(" ").toLowerCase();
+  return /\b(data_quality|documents?|manual|statement|upload|confirm|missing|stale|provider)\b/.test(combined);
+}
+
 function channelsFor(preferences, notification = {}) {
   const channels = ["in_app"];
-  const priority = notification.priority || "medium";
-  const important = priority === "high" || notification.category === "security" || notification.source === "security";
-  if (important && preferences.emailSummary && preferences.emailSummary !== "off") channels.push("email_summary");
-  if (important && preferences.phonePush && preferences.phonePush !== "off") channels.push("phone_push");
+  const urgentTask = isUrgentTaskNotification(notification);
+  if (urgentTask && preferences.emailSummary && preferences.emailSummary !== "off") channels.push("email_summary");
+  if (urgentTask && preferences.phonePush && preferences.phonePush !== "off") channels.push("phone_push");
   return channels;
 }
 

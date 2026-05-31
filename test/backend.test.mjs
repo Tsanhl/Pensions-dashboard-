@@ -106,10 +106,18 @@ test("notification provider queues and dry-runs external delivery", async () => 
     priority: "medium"
   });
   assert.ok(!mediumNotification.channels.includes("email_summary"));
-  const notification = createNotification(userId, {
-    title: "High alert",
-    body: "External delivery queue test",
+  const highButNotTask = createNotification(userId, {
+    title: "High dashboard insight",
+    body: "Important but no user data task",
     linkedView: "actions",
+    priority: "high"
+  });
+  assert.ok(!highButNotTask.channels.includes("email_summary"));
+  const notification = createNotification(userId, {
+    title: "Upload statement for manually entered pension",
+    body: "This urgent task affects dashboard calculations because the value is not backed by a confirmed statement.",
+    linkedView: "actions",
+    category: "data_quality",
     priority: "high"
   });
   assert.ok(notification.channels.includes("email_summary"));
@@ -146,9 +154,10 @@ test("EmailJS delivery includes standard message template fields", async () => {
 
   try {
     const notification = createNotification(userId, {
-      title: "Upload statement for manually entered pension",
-      body: "This urgent task affects dashboard calculations because the value is not backed by a confirmed statement.",
+      title: "**Upload statement** for manually entered pension",
+      body: "This urgent task affects dashboard calculations because _the value_ is not backed by a confirmed statement.",
       linkedView: "documents",
+      category: "data_quality",
       priority: "high"
     });
     assert.ok(notification.channels.includes("email_summary"));
@@ -157,7 +166,9 @@ test("EmailJS delivery includes standard message template fields", async () => {
     assert.equal(sentPayload.body.template_params.to_email, "person@example.com");
     assert.equal(sentPayload.body.template_params.from_name, "Pension Plan");
     assert.equal(sentPayload.body.template_params.subject, "Upload statement for manually entered pension");
+    assert.equal(sentPayload.body.template_params.alert_title, "Upload statement for manually entered pension");
     assert.match(sentPayload.body.template_params.message, /This urgent task affects dashboard calculations/);
+    assert.doesNotMatch(sentPayload.body.template_params.message, /[*_]/);
     assert.match(sentPayload.body.template_params.message, /Open dashboard section: documents/);
   } finally {
     globalThis.fetch = originalFetch;
