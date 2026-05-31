@@ -1,0 +1,17 @@
+{
+  "name": "pensions-dashboard-user-polished",
+  "version": "1.0.0",
+  "description": "User-facing pension dashboard with portfolio-aware assistant and document scanning.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "cron:agent": "node scripts/runScheduledAgent.mjs",
+    "check": "node --check app.js && node --check server.js && node --check server/prompts/assistantGuide.js && node --check server/portfolioStore.js && node --check server/store/userDataStore.js && node --check server/services/agentService.js && node --check server/services/actionService.js && node --check server/services/adminWorkflowService.js && node --check server/services/authService.js && node --check server/services/notificationService.js && node --check server/services/notificationDeliveryService.js && node --check server/services/documentService.js && node --check server/services/integrationService.js && node --check server/services/complianceService.js && node --check server/services/explainNumberService.js && node --check server/services/jobQueueService.js && node --check server/services/schedulerService.js && node --check server/routes/productApiRoutes.js && node --check server/utils/validation.js && node --check tools/visual-regression.mjs && node --check test/backend.test.mjs",
+    "test": "PENSIONS_DB_PATH=/private/tmp/pensions-dashboard-test.sqlite node --test test/*.test.mjs",
+    "visual:check": "node tools/visual-regression.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

@@ -1,0 +1,29 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Installed dependencies
+node_modules/
+
+# Local persisted user/demo data
+data/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Local uploads and generated files
+uploads/
+tmp/
+temp/
+*.log
+npm-debug.log*
+
+# Generated visual reports
+visual-regression/latest/
+FINAL_*_REPORT.json
+VERIFICATION_REPORT.md
+
+# macOS
+.DS_Store
