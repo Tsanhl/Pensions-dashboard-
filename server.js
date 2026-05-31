@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { buildAssistantInstructions } from "./server/prompts/assistantGuide.js";
 import { getVerifiedDashboardContext, getDocumentScanContext, getPortfolioSeedForUser } from "./server/portfolioStore.js";
 import { handleProductApiRoute } from "./server/routes/productApiRoutes.js";
+import { escalateActionsForAssistantQuestion } from "./server/services/actionService.js";
 import { runAgentForUser } from "./server/services/agentService.js";
 import { findSessionByToken } from "./server/services/authService.js";
 import { addDocumentConfidence, storeScannedDocument } from "./server/services/documentService.js";
@@ -1026,6 +1027,15 @@ async function handleAssistant(req, res) {
   const settings = sanitizeAssistantSettings(body.settings || {});
   const model = safeModelName(provider, body.model || body.settings?.model || process.env[PROVIDERS[provider]?.envModel] || "");
   const agentSummary = runAgentForUser({ userId, persist: true, reason: "assistant_context" });
+  const escalatedActions = escalateActionsForAssistantQuestion(userId, question);
+  if (escalatedActions.length) {
+    appendAuditEvent(userId, {
+      type: "action_priority_escalated",
+      reason: "assistant_question_depends_on_open_item",
+      actionIds: escalatedActions.map((action) => action.id),
+      questionPreview: question.slice(0, 160)
+    });
+  }
   const storedRiskProfile = readRiskProfile(userId);
   settings.riskProfile = settings.riskProfile || detectRiskStyle(question) || storedRiskProfile.preferredStyle || "";
   settings.riskProfileDetails = storedRiskProfile;
