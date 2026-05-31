@@ -2798,3 +2798,27 @@ body {
   font-weight: 500;
   line-height: 1.42;
 }
+
+/* Document upload card polish */
+.upload-card {
+  min-height: 0;
+  padding-bottom: 18px;
+}
+
+.upload-card .drop-zone {
+  min-height: 148px;
+  gap: 6px;
+}
+
+.upload-card .center-note {
+  max-width: 34ch;
+  margin: 12px auto 0;
+  color: var(--muted);
+  font-size: var(--fs-row-copy);
+  line-height: 1.35;
+}
+
+.upload-card .scan-status {
+  min-height: 0;
+  margin-top: 6px;
+}
