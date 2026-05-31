@@ -2806,8 +2806,9 @@ body {
 }
 
 .upload-card .drop-zone {
-  min-height: 148px;
-  gap: 6px;
+  min-height: 158px;
+  gap: 7px;
+  padding: 18px 16px 24px;
 }
 
 .upload-card .center-note {
