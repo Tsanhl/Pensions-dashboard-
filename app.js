@@ -953,7 +953,8 @@ function numberedActionList(actions = []) {
 
 function actionDirectLabel(action = {}) {
   const text = `${action.sourceKey || ""} ${action.category || ""} ${action.title || ""} ${action.detail || ""}`.toLowerCase();
-  if (/manual|provider|data_quality|data/.test(text)) return "Check data";
+  if (/upload|statement/.test(text)) return "Upload statement";
+  if (/add details|missing values|values_missing/.test(text)) return "Add details";
   if (/document|statement|policy/.test(text)) return "Review document";
   if (/risk/.test(text)) return "Complete risk profile";
   if (/charge|fee/.test(text)) return "Check charge";

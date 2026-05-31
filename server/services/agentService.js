@@ -92,6 +92,8 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
   const reviewDocs = documents.filter((documentItem) => /review|needs|pending/i.test(String(documentItem.status || "")));
   const highChargeAccounts = accounts.filter((account) => percentToNumber(account.charges) >= 0.75);
   const manualAccounts = accounts.filter((account) => !/provider-linked|connected/i.test(String(account.source || "")));
+  const manualAccountsUsedInCalculations = manualAccounts.filter((account) => moneyToNumber(account.pot) > 0 || percentToNumber(account.charges) > 0);
+  const manualAccountsMissingValues = manualAccounts.filter((account) => moneyToNumber(account.pot) <= 0 && percentToNumber(account.charges) <= 0);
   const staleAccounts = accounts.filter((account) => {
     const age = daysSince(account.lastUpdated, now);
     return age != null && age >= 90;
@@ -115,7 +117,7 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "document_review_required",
       "documents",
       "high",
-      reviewDocs.length === 1 ? "Review document facts" : `Review ${reviewDocs.length} documents`,
+      reviewDocs.length === 1 ? "Confirm uploaded document facts" : `Confirm facts for ${reviewDocs.length} uploaded documents`,
       "Confirm extracted facts before relying on pot values, charges, policy numbers or contribution figures.",
       "documents",
       { documentCount: reviewDocs.length, documents: reviewDocs.map((doc) => doc.name) }
@@ -131,19 +133,31 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       providers.length === 1 ? `Check ${providers[0]} charge` : "Check account charges",
       `Review annual charges for ${highChargeAccounts.map((account) => `${account.provider} (${account.charges})`).join(", ")}.`,
       "pensions",
-      { accounts: providers }
+      { accounts: providers, actionable: false }
     ));
   }
 
-  if (manualAccounts.length) {
+  if (manualAccountsUsedInCalculations.length) {
     checks.push(check(
       "manual_account_review",
       "data_quality",
+      "high",
+      manualAccountsUsedInCalculations.length === 1 ? "Upload statement for manually entered pension" : "Upload statements for manually entered pensions",
+      "These values are used in calculations but are not backed by a confirmed provider statement.",
+      "documents",
+      { accounts: manualAccountsUsedInCalculations.map((account) => account.provider), affectsCalculation: true }
+    ));
+  }
+
+  if (manualAccountsMissingValues.length) {
+    checks.push(check(
+      "manual_account_values_missing",
+      "data_quality",
       "medium",
-      manualAccounts.length === 1 ? "Check manually entered pension record" : "Check manually entered pension records",
-      "Manual records should be checked against a recent provider statement or connection before being used for decisions.",
+      manualAccountsMissingValues.length === 1 ? "Add details for manually entered pension" : "Add details for manually entered pensions",
+      "Add pot value, charge and latest statement before using these records in projections.",
       "pensions",
-      { accounts: manualAccounts.map((account) => account.provider) }
+      { accounts: manualAccountsMissingValues.map((account) => account.provider), affectsCalculation: false }
     ));
   }
 
@@ -152,9 +166,9 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "provider_data_stale",
       "data_quality",
       "medium",
-      staleAccounts.length === 1 ? "Update stale provider data" : "Update stale provider records",
-      "Provider data has not been updated for at least 90 days.",
-      "pensions",
+      staleAccounts.length === 1 ? "Upload recent provider statement" : "Upload recent provider statements",
+      "Provider data has not been updated for at least 90 days, so current calculation inputs may be stale.",
+      "documents",
       { accounts: staleAccounts.map((account) => ({ provider: account.provider, lastUpdated: account.lastUpdated })) }
     ));
   }
@@ -164,8 +178,8 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "state_pension_forecast_stale",
       "projection",
       "medium",
-      "Refresh State Pension forecast",
-      "The State Pension forecast is over a year old and should be checked before relying on income projections.",
+      "Add updated State Pension forecast",
+      "The State Pension forecast is over a year old and should be updated before relying on income projections.",
       "target",
       { lastUpdated: dashboard?.statePension?.lastUpdated }
     ));

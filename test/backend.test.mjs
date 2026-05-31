@@ -23,8 +23,8 @@ const dashboard = {
   },
   dataQuality: { reviewDocs: 1, highCharge: 1 },
   pensionAccounts: [
-    { provider: "Aviva", source: "Provider-linked", charges: "0.45%", lastUpdated: "12 May 2026" },
-    { provider: "OneLife", source: "Manual entry", charges: "0.80%", lastUpdated: "18 Apr 2026" }
+    { provider: "Aviva", source: "Provider-linked", charges: "0.45%", pot: "£68,450", lastUpdated: "12 May 2026" },
+    { provider: "OneLife", source: "Manual entry", charges: "0.80%", pot: "£7,650", lastUpdated: "18 Apr 2026" }
   ],
   documents: [
     { name: "Aviva statement", status: "Checked" },
@@ -44,6 +44,8 @@ test("agent returns next best action and assistant context", () => {
   assert.match(summary.assistantContext.summary, /Current investment style: Balanced/);
   assert.match(summary.assistantContext.summary, /Risk profile: missing/);
   assert.ok(summary.actionCandidates.some((action) => action.sourceKey === "document_review_required"));
+  assert.ok(summary.actionCandidates.some((action) => action.sourceKey === "manual_account_review" && action.priority === "high"));
+  assert.ok(!summary.actionCandidates.some((action) => action.sourceKey === "high_charge_account"));
   assert.ok(!summary.actionCandidates.some((action) => action.sourceKey === "risk_profile_missing"));
   assert.ok(!summary.actionCandidates.some((action) => action.sourceKey === "target_gap_open"));
 });
