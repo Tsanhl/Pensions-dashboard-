@@ -115,7 +115,7 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "document_review_required",
       "documents",
       "high",
-      `${reviewDocs.length} document${reviewDocs.length === 1 ? " needs" : "s need"} review`,
+      reviewDocs.length === 1 ? "Review document facts" : `Review ${reviewDocs.length} documents`,
       "Confirm extracted facts before relying on pot values, charges, policy numbers or contribution figures.",
       "documents",
       { documentCount: reviewDocs.length, documents: reviewDocs.map((doc) => doc.name) }
@@ -123,14 +123,15 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
   }
 
   if (highChargeAccounts.length) {
+    const providers = highChargeAccounts.map((account) => account.provider).filter(Boolean);
     checks.push(check(
       "high_charge_account",
       "charges",
       "medium",
-      `${highChargeAccounts.length} account charge to check`,
+      providers.length === 1 ? `Check ${providers[0]} charge` : "Check account charges",
       `Review annual charges for ${highChargeAccounts.map((account) => `${account.provider} (${account.charges})`).join(", ")}.`,
       "pensions",
-      { accounts: highChargeAccounts.map((account) => account.provider) }
+      { accounts: providers }
     ));
   }
 
@@ -139,7 +140,7 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "manual_account_review",
       "data_quality",
       "medium",
-      `${manualAccounts.length} manually entered pension record${manualAccounts.length === 1 ? "" : "s"}`,
+      manualAccounts.length === 1 ? "Check manually entered pension record" : "Check manually entered pension records",
       "Manual records should be checked against a recent provider statement or connection before being used for decisions.",
       "pensions",
       { accounts: manualAccounts.map((account) => account.provider) }
@@ -151,7 +152,7 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "provider_data_stale",
       "data_quality",
       "medium",
-      `${staleAccounts.length} pension provider update${staleAccounts.length === 1 ? " is" : "s are"} stale`,
+      staleAccounts.length === 1 ? "Update stale provider data" : "Update stale provider records",
       "Provider data has not been updated for at least 90 days.",
       "pensions",
       { accounts: staleAccounts.map((account) => ({ provider: account.provider, lastUpdated: account.lastUpdated })) }
@@ -163,7 +164,7 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "state_pension_forecast_stale",
       "projection",
       "medium",
-      "State Pension forecast needs refreshing",
+      "Refresh State Pension forecast",
       "The State Pension forecast is over a year old and should be checked before relying on income projections.",
       "target",
       { lastUpdated: dashboard?.statePension?.lastUpdated }
@@ -175,7 +176,7 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "target_gap_open",
       "projection",
       "medium",
-      `Target gap remains ${dashboard.monthlyGap} per month`,
+      "Review target gap",
       "The projection still falls short of the monthly target, so contributions, retirement age, investment route and assumptions should be reviewed.",
       "target",
       { monthlyGap: dashboard.monthlyGap, monthlyTarget: dashboard.monthlyTarget }
@@ -187,7 +188,7 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "style_risk_mismatch",
       "investment",
       "high",
-      "Investment style differs from risk profile",
+      "Review investment style",
       `Current style is ${dashboard.investmentProfile?.currentStyle}; stored risk preference is ${riskProfile.preferredStyle}. Review whether the portfolio route still fits.`,
       "investments",
       { currentStyle: current, preferredStyle: preferred }

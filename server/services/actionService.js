@@ -1,5 +1,6 @@
 import { daysSince, isoNow } from "../utils/values.js";
 import { newId, readActions, writeActions } from "../store/userDataStore.js";
+import { notifyUrgentAction } from "./notificationService.js";
 
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 const LOW_TO_MEDIUM_DAYS = 90;
@@ -121,6 +122,7 @@ export function syncActionsFromAgent(userId, summary) {
     if (existing) {
       const basePriority = normalisePriority(candidate.priority);
       const nextPriority = priorityWithAgeEscalation(existing, basePriority);
+      const previousPriority = existing.priority;
       if (
         existing.title !== candidate.title ||
         existing.detail !== candidate.detail ||
@@ -135,6 +137,7 @@ export function syncActionsFromAgent(userId, summary) {
         existing.escalation = nextPriority.escalation;
         existing.linkedView = candidate.linkedView || existing.linkedView || "overview";
         existing.updatedAt = isoNow();
+        if (previousPriority !== "high" && existing.priority === "high") notifyUrgentAction(userId, existing);
         changed = true;
       }
       continue;
@@ -153,7 +156,13 @@ export function syncActionsFromAgent(userId, summary) {
       changed = true;
       continue;
     }
-    if (action.status === "open" && applyAgeEscalation(action)) changed = true;
+    if (action.status === "open") {
+      const previousPriority = action.priority;
+      if (applyAgeEscalation(action)) {
+        if (previousPriority !== "high" && action.priority === "high") notifyUrgentAction(userId, action);
+        changed = true;
+      }
+    }
   }
 
   return changed ? writeActions(userId, actions) : actions;
@@ -176,6 +185,7 @@ export function escalateActionsForAssistantQuestion(userId, question = "") {
       escalatedAt: isoNow()
     };
     action.updatedAt = isoNow();
+    if (action.priority === "high") notifyUrgentAction(userId, action);
     escalated.push(action);
   }
   if (escalated.length) writeActions(userId, actions);

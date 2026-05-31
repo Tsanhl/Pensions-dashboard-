@@ -1585,7 +1585,7 @@ textarea { font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "
 .action-numbered-list li {
   counter-increment: action-step;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(44px, auto) minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   border: 1px solid var(--line);
@@ -1593,10 +1593,32 @@ textarea { font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "
   padding: 14px 16px;
   background: #fff;
 }
-.action-numbered-list li::before {
+.action-step-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 44px;
+}
+.action-step-number::before {
   content: counter(action-step) ".";
   color: var(--blue);
   font-weight: 700;
+}
+.action-numbered-list li[data-priority="high"] {
+  border-color: #fac7ca;
+  background: linear-gradient(90deg, #fff7f8, #fff);
+}
+.urgent-task-marker {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--red-2);
+  color: var(--red);
+  font-weight: 800;
+  line-height: 1;
+  border: 1px solid #fac7ca;
 }
 .action-numbered-list strong {
   display: block;
@@ -1663,7 +1685,7 @@ textarea { font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "
     justify-content: flex-start;
   }
   .action-numbered-list li {
-    grid-template-columns: 24px minmax(0, 1fr);
+    grid-template-columns: minmax(44px, auto) minmax(0, 1fr);
   }
   .action-numbered-list .action-centre-controls {
     grid-column: 2;

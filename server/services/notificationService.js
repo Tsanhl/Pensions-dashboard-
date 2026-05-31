@@ -102,6 +102,61 @@ export function createNotification(userId, input = {}) {
   return notification;
 }
 
+export function notifyUrgentAction(userId, action = {}) {
+  if (!action?.id && !action?.sourceKey) return null;
+  const preferences = readNotificationPreferences(userId);
+  const notifications = readNotifications(userId);
+  const sourceKey = `urgent_action_${action.id || action.sourceKey}`;
+  const body = action.detail || "This action has become urgent and should be reviewed before relying on the dashboard.";
+  const existing = notifications.find((notification) => notification.sourceKey === sourceKey && notification.status !== "dismissed");
+  if (existing) {
+    let changed = false;
+    const nextChannels = channelsFor(preferences, { ...existing, priority: "high", category: action.category || existing.category });
+    if (existing.title !== action.title) {
+      existing.title = action.title;
+      changed = true;
+    }
+    if (existing.body !== body) {
+      existing.body = body;
+      changed = true;
+    }
+    if (existing.priority !== "high") {
+      existing.priority = "high";
+      changed = true;
+    }
+    if (JSON.stringify(existing.channels || []) !== JSON.stringify(nextChannels)) {
+      existing.channels = nextChannels;
+      changed = true;
+    }
+    if (changed) {
+      existing.updatedAt = isoNow();
+      writeNotifications(userId, notifications);
+      queueNotificationDelivery(userId, existing);
+    }
+    return existing;
+  }
+  const notification = {
+    id: newId("notification"),
+    source: "action_escalation",
+    sourceKey,
+    category: action.category || "action",
+    preferenceKey: "actionNeeded",
+    priority: "high",
+    title: action.title || "Action needs urgent review",
+    body,
+    linkedView: action.linkedView || "overview",
+    status: "unread",
+    channels: channelsFor(preferences, { priority: "high", category: action.category || "action" }),
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+    readAt: null
+  };
+  notifications.unshift(notification);
+  writeNotifications(userId, notifications);
+  queueNotificationDelivery(userId, notification);
+  return notification;
+}
+
 export function listNotifications(userId, { status = "active" } = {}) {
   const notifications = readNotifications(userId);
   if (status === "all") return notifications;

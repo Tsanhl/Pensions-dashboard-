@@ -365,14 +365,14 @@ function itemIcon(category = "") {
 }
 
 function priorityColor(priority = "") {
-  if (priority === "high") return "amber";
+  if (priority === "high") return "red";
   if (priority === "low") return "blue";
   return "blue";
 }
 
 function actionToRow(action) {
   return [
-    itemIcon(action.category),
+    action.priority === "high" ? "!" : itemIcon(action.category),
     priorityColor(action.priority),
     action.title,
     action.detail || "",
@@ -923,18 +923,7 @@ function groupedActionsHtml(openActions = []) {
   if (!openActions.length) {
     return `<p class="subtle">No open actions.</p>`;
   }
-
-  const grouped = {
-    high: openActions.filter((action) => action.priority === "high"),
-    medium: openActions.filter((action) => action.priority === "medium"),
-    low: openActions.filter((action) => action.priority !== "high" && action.priority !== "medium")
-  };
-
-  return [
-    grouped.high.length ? actionGroup("High priority", grouped.high) : "",
-    grouped.medium.length ? actionGroup("Medium priority", grouped.medium) : "",
-    grouped.low.length ? actionGroup("Not urgent", grouped.low) : ""
-  ].join("");
+  return numberedActionList(openActions);
 }
 
 function actionGroup(title, actions = [], emptyText = "No items.") {
@@ -943,7 +932,8 @@ function actionGroup(title, actions = [], emptyText = "No items.") {
 
 function numberedActionList(actions = []) {
   return `<ol class="action-numbered-list">
-    ${actions.map((action) => `<li>
+    ${actions.map((action) => `<li data-priority="${escapeHtml(action.priority || "medium")}">
+      <span class="action-step-marker">${action.priority === "high" ? `<span class="urgent-task-marker" aria-label="Action needed">!</span>` : ""}<span class="action-step-number" aria-hidden="true"></span></span>
       <span><strong>${escapeHtml(action.title)}</strong><small>${escapeHtml(action.detail || "")}</small></span>
       <span class="action-centre-controls"><button class="secondary-action slim" type="button" data-view="${escapeHtml(action.linkedView || "overview")}">${escapeHtml(actionDirectLabel(action))}</button><button class="inline-link small" type="button" data-action-done="${escapeHtml(action.id)}">Dismiss</button></span>
     </li>`).join("")}
@@ -1557,7 +1547,7 @@ function renderAlerts() {
   const badge = $(".notification-badge");
   if (badge) badge.textContent = String(Math.min(99, activeNotifications.length || 0));
   $("#alert-list").innerHTML = activeNotifications.length ? activeNotifications.slice(0, 5).map((notification) => `<div class="notification-row ${escapeHtml(notification.status)}">
-    <button class="status-row" type="button" data-view="${escapeHtml(notification.linkedView || "overview")}"><span class="status-icon ${notification.priority === "high" ? "amber" : "blue"}" aria-hidden="true">${escapeHtml(itemIcon(notification.category))}</span><span><strong>${escapeHtml(notification.title)}</strong><small>${escapeHtml(notification.body || "")}</small></span><span aria-hidden="true">›</span></button>
+    <button class="status-row" type="button" data-view="${escapeHtml(notification.linkedView || "overview")}"><span class="status-icon ${notification.priority === "high" ? "red" : "blue"}" aria-hidden="true">${escapeHtml(notification.priority === "high" ? "!" : itemIcon(notification.category))}</span><span><strong>${escapeHtml(notification.title)}</strong><small>${escapeHtml(notification.body || "")}</small></span><span aria-hidden="true">›</span></button>
     <div class="notification-actions"><button class="inline-link small danger-link" type="button" data-notification-dismiss="${escapeHtml(notification.id)}">Dismiss</button></div>
   </div>`).join("") : [
     statusRow("!", "amber", "1 document needs review", "Confirm extracted fields before saving.", "documents"),

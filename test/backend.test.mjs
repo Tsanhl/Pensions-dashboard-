@@ -5,7 +5,7 @@ import { escalateActionsForAssistantQuestion, syncActionsFromAgent } from "../se
 import { createSession, getSession, startMfaChallenge, verifyMfaChallenge } from "../server/services/authService.js";
 import { complianceMetadata } from "../server/services/complianceService.js";
 import { requestDataDeletion, listDeletionRequests, updateDeletionRequest } from "../server/services/adminWorkflowService.js";
-import { createNotification } from "../server/services/notificationService.js";
+import { createNotification, listNotifications } from "../server/services/notificationService.js";
 import { flushNotificationDeliveries, listNotificationDeliveries } from "../server/services/notificationDeliveryService.js";
 import { readActions, storageStatus, writeActions } from "../server/store/userDataStore.js";
 import { validateRiskProfileInput } from "../server/utils/validation.js";
@@ -203,4 +203,6 @@ test("open actions escalate by age and dependent assistant questions", () => {
   assert.ok(escalated.some((action) => action.id === "fresh-medium"));
   actions = readActions(userId);
   assert.equal(actions.find((action) => action.id === "fresh-medium").priority, "high");
+  assert.ok(listNotifications(userId, { status: "all" }).some((notification) => notification.source === "action_escalation" && notification.priority === "high"));
+  assert.ok(listNotificationDeliveries(userId, { status: "queued" }).some((delivery) => delivery.channel === "email_summary"));
 });
