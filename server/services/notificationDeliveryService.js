@@ -109,7 +109,20 @@ async function sendWithSendGrid(delivery) {
   if (!response.ok) throw new Error(`SendGrid failed with status ${response.status}`);
 }
 
+function deliverySubject(delivery) {
+  return String(delivery.title || "Urgent pension dashboard task").trim();
+}
+
+function deliveryMessage(delivery) {
+  const title = deliverySubject(delivery);
+  const body = String(delivery.body || "Open the dashboard to review this urgent pension task.").trim();
+  const view = String(delivery.linkedView || "overview").trim();
+  return `${title}\n\n${body}\n\nOpen dashboard section: ${view}`;
+}
+
 async function sendWithEmailJs(delivery) {
+  const subject = deliverySubject(delivery);
+  const message = deliveryMessage(delivery);
   const payload = {
     service_id: process.env.EMAILJS_SERVICE_ID,
     template_id: process.env.EMAILJS_TEMPLATE_ID,
@@ -117,6 +130,12 @@ async function sendWithEmailJs(delivery) {
     template_params: {
       to_email: delivery.destination,
       to_name: delivery.destination,
+      from_name: "Pension Plan",
+      from_email: process.env.EMAIL_FROM || "alerts@example.com",
+      reply_to: process.env.EMAIL_REPLY_TO || delivery.destination,
+      subject,
+      title: subject,
+      message,
       alert_title: delivery.title,
       alert_body: delivery.body,
       linked_view: delivery.linkedView || "overview"

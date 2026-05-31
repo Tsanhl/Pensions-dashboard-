@@ -7,7 +7,7 @@ import { complianceMetadata } from "../server/services/complianceService.js";
 import { requestDataDeletion, listDeletionRequests, updateDeletionRequest } from "../server/services/adminWorkflowService.js";
 import { createNotification, listNotifications } from "../server/services/notificationService.js";
 import { flushNotificationDeliveries, listNotificationDeliveries } from "../server/services/notificationDeliveryService.js";
-import { readActions, storageStatus, writeActions } from "../server/store/userDataStore.js";
+import { readActions, storageStatus, writeActions, writePortfolio } from "../server/store/userDataStore.js";
 import { validateRiskProfileInput } from "../server/utils/validation.js";
 
 const dashboard = {
@@ -117,6 +117,55 @@ test("notification provider queues and dry-runs external delivery", async () => 
   const result = await flushNotificationDeliveries(userId);
   assert.ok(result.processed >= 1);
   assert.ok(listNotificationDeliveries(userId, { status: "dry_run" }).length >= 1);
+});
+
+test("EmailJS delivery includes standard message template fields", async () => {
+  const userId = `test-emailjs-${Date.now()}`;
+  const savedEnv = {
+    EMAILJS_SERVICE_ID: process.env.EMAILJS_SERVICE_ID,
+    EMAILJS_TEMPLATE_ID: process.env.EMAILJS_TEMPLATE_ID,
+    EMAILJS_PUBLIC_KEY: process.env.EMAILJS_PUBLIC_KEY,
+    EMAILJS_PRIVATE_KEY: process.env.EMAILJS_PRIVATE_KEY,
+    EMAIL_FROM: process.env.EMAIL_FROM,
+    EMAIL_REPLY_TO: process.env.EMAIL_REPLY_TO
+  };
+  const originalFetch = globalThis.fetch;
+  let sentPayload = null;
+
+  process.env.EMAILJS_SERVICE_ID = "service_test";
+  process.env.EMAILJS_TEMPLATE_ID = "template_test";
+  process.env.EMAILJS_PUBLIC_KEY = "public_test";
+  delete process.env.EMAILJS_PRIVATE_KEY;
+  process.env.EMAIL_FROM = "alerts@example.com";
+  delete process.env.EMAIL_REPLY_TO;
+  writePortfolio(userId, { profile: { email: "person@example.com" } });
+  globalThis.fetch = async (url, options) => {
+    sentPayload = { url, body: JSON.parse(options.body) };
+    return { ok: true, status: 200 };
+  };
+
+  try {
+    const notification = createNotification(userId, {
+      title: "Upload statement for manually entered pension",
+      body: "This urgent task affects dashboard calculations because the value is not backed by a confirmed statement.",
+      linkedView: "documents",
+      priority: "high"
+    });
+    assert.ok(notification.channels.includes("email_summary"));
+    await flushNotificationDeliveries(userId);
+    assert.equal(sentPayload.url, "https://api.emailjs.com/api/v1.0/email/send");
+    assert.equal(sentPayload.body.template_params.to_email, "person@example.com");
+    assert.equal(sentPayload.body.template_params.from_name, "Pension Plan");
+    assert.equal(sentPayload.body.template_params.subject, "Upload statement for manually entered pension");
+    assert.match(sentPayload.body.template_params.message, /This urgent task affects dashboard calculations/);
+    assert.match(sentPayload.body.template_params.message, /Open dashboard section: documents/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 test("open actions escalate by age and dependent assistant questions", () => {
