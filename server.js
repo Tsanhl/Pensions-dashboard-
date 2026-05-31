@@ -11,10 +11,11 @@ import { escalateActionsForAssistantQuestion, questionDependencyWarning } from "
 import { runAgentForUser } from "./server/services/agentService.js";
 import { findSessionByToken } from "./server/services/authService.js";
 import { addDocumentConfidence, storeScannedDocument } from "./server/services/documentService.js";
-import { complianceMetadata } from "./server/services/complianceService.js";
+import { complianceMetadata, createComplianceCaseIfNeeded, recordAssistantAnswerAudit } from "./server/services/complianceService.js";
 import { createNotification } from "./server/services/notificationService.js";
 import { startAgentScheduler } from "./server/services/schedulerService.js";
-import { appendAuditEvent, initialiseDataStore, readRiskProfile } from "./server/store/userDataStore.js";
+import { addJob, runJob } from "./server/services/jobQueueService.js";
+import { appendAuditEvent, appendSystemEvent, initialiseDataStore, readRiskProfile } from "./server/store/userDataStore.js";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 
@@ -50,7 +51,12 @@ function authenticatedUserId(req) {
 
 function bearerToken(req) {
   const auth = String(req?.headers?.authorization || "");
-  return auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : String(req?.headers?.["x-session-token"] || "").trim();
+  if (auth.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
+  const headerToken = String(req?.headers?.["x-session-token"] || "").trim();
+  if (headerToken) return headerToken;
+  const cookie = String(req?.headers?.cookie || "");
+  const match = cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("pension_session="));
+  return match ? decodeURIComponent(match.slice("pension_session=".length)) : "";
 }
 
 function productionAuthRequired() {
@@ -562,21 +568,24 @@ function extractionPayload({ userId, file, extraction, provider, model, summary,
   };
 }
 
-async function handleExtractDocument(req, res) {
-  if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
-  const body = JSON.parse(await readBody(req) || "{}");
+async function extractDocumentFromBody({ body = {}, userId }) {
   const file = body.file || body.document || {};
   const persistScan = body.dryRun !== true;
-  if (!file.fileName && !file.name) return json(res, 400, { error: "Document file payload is required" });
-  const userId = authenticatedUserId(req);
+  if (!file.fileName && !file.name) {
+    const error = new Error("Document file payload is required");
+    error.status = 400;
+    throw error;
+  }
   const provider = resolveProvider(body);
   const model = safeModelName(provider, body.model || body.settings?.model);
   const apiKey = resolveApiKey(provider, body);
   const endpoint = String(body.endpoint || body.settings?.endpoint || "").trim();
   const dashboard = getDocumentScanContext({ userId });
   if (!apiKey && provider !== "ollama") {
-    if (file.text) return json(res, 200, extractionPayload({ userId, file, extraction: localExtractDocument(file), provider: "local", model: "local-text-scan", summary: "No API key was configured, so readable text was scanned locally.", persist: persistScan }));
-    return json(res, 503, { error: `No server API key configured for ${PROVIDERS[provider].label}. Upload a readable text document or configure a server-held key for image/PDF scanning.` });
+    if (file.text) return extractionPayload({ userId, file, extraction: localExtractDocument(file), provider: "local", model: "local-text-scan", summary: "No API key was configured, so readable text was scanned locally.", persist: persistScan });
+    const error = new Error(`No server API key configured for ${PROVIDERS[provider].label}. Upload a readable text document or configure a server-held key for image/PDF scanning.`);
+    error.status = 503;
+    throw error;
   }
   let extracted = null;
   try {
@@ -585,11 +594,50 @@ async function handleExtractDocument(req, res) {
     else if (provider === "groq" || provider === "openrouter" || provider === "custom") extracted = await scanWithOpenAICompatible({provider, apiKey, model, file, dashboard, endpoint});
     else if (provider === "ollama") extracted = await scanWithOllama({model, file, dashboard});
     if (!extracted || typeof extracted !== "object") throw new Error("The model did not return valid extraction JSON");
-    return json(res, 200, extractionPayload({ userId, file, extraction: extracted, provider, model, summary: `Document scanned with ${PROVIDERS[provider]?.label || provider}.`, persist: persistScan }));
+    return extractionPayload({ userId, file, extraction: extracted, provider, model, summary: `Document scanned with ${PROVIDERS[provider]?.label || provider}.`, persist: persistScan });
   } catch (error) {
-    if (file.text) return json(res, 200, extractionPayload({ userId, file, extraction: localExtractDocument(file), provider: "local", model: "local-text-scan", summary: `${error.message}. Local readable-text scan was used instead.`, persist: persistScan }));
-    return json(res, error.status || 502, { error: error.message || "Document scan failed" });
+    if (file.text) return extractionPayload({ userId, file, extraction: localExtractDocument(file), provider: "local", model: "local-text-scan", summary: `${error.message}. Local readable-text scan was used instead.`, persist: persistScan });
+    error.status = error.status || 502;
+    throw error;
   }
+}
+
+async function handleExtractDocument(req, res) {
+  if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+  const body = JSON.parse(await readBody(req) || "{}");
+  const file = body.file || body.document || {};
+  if (!file.fileName && !file.name) return json(res, 400, { error: "Document file payload is required" });
+  const userId = authenticatedUserId(req);
+  if (body.async === true) {
+    const provider = resolveProvider(body);
+    const model = safeModelName(provider, body.model || body.settings?.model);
+    const job = addJob(userId, {
+      type: "document_scan",
+      payload: {
+        fileName: file.fileName || file.name,
+        mimeType: file.mimeType || "",
+        provider,
+        model,
+        persist: body.dryRun !== true
+      }
+    });
+    setTimeout(() => {
+      runJob(userId, job.id, async () => {
+        const result = await extractDocumentFromBody({ body, userId });
+        return {
+          documentId: result.documentId,
+          provider: result.provider,
+          model: result.model,
+          summary: result.summary,
+          confidence: result.extraction?.confidence || ""
+        };
+      }).then((updatedJob) => {
+        if (updatedJob.status === "failed") appendSystemEvent({ type: "document_scan_job_failed", userId, jobId: updatedJob.id, error: updatedJob.error });
+      }).catch((error) => appendSystemEvent({ type: "document_scan_job_error", userId, jobId: job.id, error: error.message || "Document scan job failed" }));
+    }, 0);
+    return json(res, 202, { job, message: "Document scan queued." });
+  }
+  return json(res, 200, await extractDocumentFromBody({ body, userId }));
 }
 
 
@@ -982,6 +1030,61 @@ function localInvestmentStyleReview(dashboard) {
   };
 }
 
+function assistantResponsePayload({
+  userId,
+  answer,
+  dashboard,
+  provider,
+  model,
+  usedSearch,
+  providerLabel,
+  currentSourceNote,
+  agentSummary,
+  compliance,
+  settings = {},
+  question = "",
+  dependencyWarning = "",
+  providerError = ""
+}) {
+  const dataUsed = dataUsedLines(dashboard, { provider, usedSearch, currentSourceNote, investmentReview: settings.investmentReview });
+  const finalAnswer = appendDataUsedSection(answer, dashboard, { provider, usedSearch, currentSourceNote, investmentReview: settings.investmentReview, question, dependencyWarning });
+  const answerAudit = recordAssistantAnswerAudit(userId, {
+    question,
+    answer: finalAnswer,
+    provider,
+    model,
+    usedSearch,
+    currentSourceNote,
+    compliance,
+    dashboard,
+    dataUsed,
+    dependencyWarning
+  });
+  const complianceCase = createComplianceCaseIfNeeded(userId, {
+    question,
+    provider,
+    model,
+    usedSearch,
+    currentSourceNote,
+    answerAuditId: answerAudit.id
+  });
+  return {
+    answer: finalAnswer,
+    model,
+    provider,
+    usedSearch,
+    providerLabel,
+    ...(providerError ? { providerError } : {}),
+    dataSource: dashboard.dataSource,
+    dataUsed,
+    currentSourceNote,
+    agentContext: agentSummary.assistantContext,
+    compliance,
+    answerAuditId: answerAudit.id,
+    complianceCaseId: complianceCase?.id || null
+  };
+}
+
 async function handleInvestmentReview(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
   const body = JSON.parse(await readBody(req) || "{}");
@@ -1067,18 +1170,21 @@ async function handleAssistant(req, res) {
       adviceBoundary: compliance.adviceBoundary,
       questionPreview: question.slice(0, 160)
     });
-    return json(res, 200, {
-      answer: appendDataUsedSection(fallback, dashboard, { provider: "local", usedSearch: false, currentSourceNote: fallbackSourceNote, investmentReview: settings.investmentReview, question, dependencyWarning }),
-      model: "server-portfolio-linked",
+    return json(res, 200, assistantResponsePayload({
+      userId,
+      answer: fallback,
+      dashboard,
       provider: "local",
+      model: "server-portfolio-linked",
       usedSearch: false,
       providerLabel: "Portfolio assistant",
-      dataSource: dashboard.dataSource,
-      dataUsed: dataUsedLines(dashboard, { usedSearch: false, currentSourceNote: fallbackSourceNote, investmentReview: settings.investmentReview }),
       currentSourceNote: fallbackSourceNote,
-      agentContext: agentSummary.assistantContext,
-      compliance
-    });
+      agentSummary,
+      compliance,
+      settings,
+      question,
+      dependencyWarning
+    }));
   }
 
   try {
@@ -1098,18 +1204,21 @@ async function handleAssistant(req, res) {
       adviceBoundary: compliance.adviceBoundary,
       questionPreview: question.slice(0, 160)
     });
-    return json(res, 200, {
-      answer: appendDataUsedSection(result.answer, dashboard, { provider: result.provider, usedSearch: result.usedSearch, currentSourceNote, investmentReview: settings.investmentReview, question, dependencyWarning }),
-      model: result.model,
+    return json(res, 200, assistantResponsePayload({
+      userId,
+      answer: result.answer,
+      dashboard,
       provider: result.provider,
+      model: result.model,
       usedSearch: result.usedSearch,
       providerLabel: "Assistant ready",
-      dataSource: dashboard.dataSource,
-      dataUsed: dataUsedLines(dashboard, { provider: result.provider, usedSearch: result.usedSearch, currentSourceNote, investmentReview: settings.investmentReview }),
       currentSourceNote,
-      agentContext: agentSummary.assistantContext,
-      compliance
-    });
+      agentSummary,
+      compliance,
+      settings,
+      question,
+      dependencyWarning
+    }));
   } catch (error) {
     const fallback = localReadOnlyAssistant(question, dashboard, settings);
     const note = `${currentSourceNote} Provider connection was not available: ${error.message || "unknown error"}`;
@@ -1123,19 +1232,22 @@ async function handleAssistant(req, res) {
       adviceBoundary: compliance.adviceBoundary,
       questionPreview: question.slice(0, 160)
     });
-    return json(res, 200, {
-      answer: appendDataUsedSection(fallback, dashboard, { provider: "local", usedSearch: false, currentSourceNote: note, investmentReview: settings.investmentReview, question, dependencyWarning }),
-      model: "server-portfolio-linked",
+    return json(res, 200, assistantResponsePayload({
+      userId,
+      answer: fallback,
+      dashboard,
       provider: "local",
+      model: "server-portfolio-linked",
       usedSearch: false,
       providerLabel: "Portfolio assistant fallback",
-      providerError: error.message || "Provider request failed",
-      dataSource: dashboard.dataSource,
-      dataUsed: dataUsedLines(dashboard, { provider: "local", usedSearch: false, currentSourceNote: note, investmentReview: settings.investmentReview }),
       currentSourceNote: note,
-      agentContext: agentSummary.assistantContext,
-      compliance
-    });
+      agentSummary,
+      compliance,
+      settings,
+      question,
+      dependencyWarning,
+      providerError: error.message || "Provider request failed"
+    }));
   }
 }
 
@@ -1247,6 +1359,16 @@ createServer(async (req, res) => {
     if (productRouteResult !== false) return productRouteResult;
     return serveStatic(req, res);
   } catch (error) {
+    if ((error.status || 500) >= 500) {
+      try {
+        appendSystemEvent({
+          type: "server_error",
+          path: new URL(req.url, `http://${req.headers.host}`).pathname,
+          method: req.method,
+          message: error.message || "Server error"
+        });
+      } catch {}
+    }
     return json(res, error.status || 500, { error: error.message || "Server error" });
   }
 }).listen(PORT, () => {

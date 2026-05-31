@@ -1,5 +1,5 @@
 import { isoNow } from "../utils/values.js";
-import { flushDataStore, listKnownUsers, readSchedulerRuns, storageStatus, writeSchedulerRuns } from "../store/userDataStore.js";
+import { appendSystemEvent, flushDataStore, listKnownUsers, readSchedulerRuns, storageStatus, writeSchedulerRuns } from "../store/userDataStore.js";
 import { runAgentForUser } from "./agentService.js";
 import { flushNotificationDeliveries } from "./notificationDeliveryService.js";
 
@@ -56,6 +56,7 @@ export function startAgentScheduler() {
   schedulerTimer = setInterval(() => {
     runScheduledAgent({ reason: "background_interval" }).catch((error) => {
       console.error("Scheduled agent run failed:", error.message);
+      appendSystemEvent({ type: "scheduler_error", message: error.message || "Scheduled agent run failed" });
     });
   }, schedulerIntervalMs());
   schedulerTimer.unref?.();

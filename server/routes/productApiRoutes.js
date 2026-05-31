@@ -1,7 +1,21 @@
-import { appendAuditEvent, readAuditLog, readPortfolio, readRiskProfile, storageStatus, writePortfolio, writeRiskProfile } from "../store/userDataStore.js";
+import { appendAuditEvent, newId, readAuditLog, readPortfolio, readRiskProfile, storageStatus, writePortfolio, writeRiskProfile } from "../store/userDataStore.js";
 import { getContributionScenarios } from "../portfolioStore.js";
 import { runAgentForUser } from "../services/agentService.js";
-import { createSession, getSession, listSessions, revokeOtherSessions, revokeSession, startMfaChallenge, verifyMfaChallenge } from "../services/authService.js";
+import {
+  authenticateWithPassword,
+  completePasswordReset,
+  createAuthUser,
+  createSession,
+  getAuthStatus,
+  getSession,
+  listSessions,
+  revokeOtherSessions,
+  revokeSession,
+  startMfaChallenge,
+  startPasswordReset,
+  verifyMfaChallenge,
+  verifyRecoveryCode
+} from "../services/authService.js";
 import { listDeletionRequests, requestDataDeletion, updateDeletionRequest } from "../services/adminWorkflowService.js";
 import { createManualAction, listActions, updateAction } from "../services/actionService.js";
 import {
@@ -14,11 +28,13 @@ import {
 } from "../services/notificationService.js";
 import { confirmDocumentFacts, listDocuments, updateDocumentFacts } from "../services/documentService.js";
 import { getIntegrationStatus } from "../services/integrationService.js";
-import { getComplianceStatus } from "../services/complianceService.js";
+import { getComplianceStatus, listAssistantAnswerAudits, listComplianceCases, updateComplianceCase } from "../services/complianceService.js";
 import { explainNumber } from "../services/explainNumberService.js";
-import { queueStatus } from "../services/jobQueueService.js";
+import { getJob, listJobs, queueStatus } from "../services/jobQueueService.js";
 import { listNotificationDeliveries, flushNotificationDeliveries } from "../services/notificationDeliveryService.js";
 import { runScheduledAgent, schedulerStatus } from "../services/schedulerService.js";
+import { monitoringStatus } from "../services/monitoringService.js";
+import { checkRateLimit } from "../services/rateLimitService.js";
 import { validateActionInput, validateNotificationPreferences, validateRiskProfileInput } from "../utils/validation.js";
 
 async function parseBody(readBody, req) {
@@ -43,7 +59,27 @@ function todayLabel() {
 function bearerToken(req) {
   const auth = String(req.headers.authorization || "");
   if (auth.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
-  return String(req.headers["x-session-token"] || "").trim();
+  const headerToken = String(req.headers["x-session-token"] || "").trim();
+  if (headerToken) return headerToken;
+  const cookie = String(req.headers.cookie || "");
+  const match = cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("pension_session="));
+  return match ? decodeURIComponent(match.slice("pension_session=".length)) : "";
+}
+
+function clientIp(req) {
+  return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "local").split(",")[0].trim();
+}
+
+function setSessionCookie(res, sessionToken = "", expiresAt = "") {
+  if (!sessionToken) return;
+  const maxAge = Math.max(60, Math.floor((Date.parse(expiresAt || "") - Date.now()) / 1000) || 8 * 60 * 60);
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `pension_session=${encodeURIComponent(sessionToken)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`);
+}
+
+function clearSessionCookie(res) {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `pension_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
 }
 
 function timelineDateLabel(value) {
@@ -179,17 +215,62 @@ export async function handleProductApiRoute({ req, res, url, json, readBody, use
     return json(res, 200, { userId, authenticated: Boolean(session), session, activeSessions: listSessions(userId) });
   }
 
+  if (pathname === "/api/auth/status") {
+    if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
+    return json(res, 200, getAuthStatus(userId));
+  }
+
+  if (pathname === "/api/auth/register") {
+    if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+    const body = await parseBody(readBody, req);
+    checkRateLimit({ key: `auth-register:${clientIp(req)}:${String(body.email || "").toLowerCase()}`, limit: 6, windowMs: 15 * 60_000 });
+    const authUser = createAuthUser(body.userId || userId, {
+      email: body.email,
+      password: body.password,
+      displayName: body.displayName || body.name,
+      require2fa: body.require2fa !== false
+    });
+    const auth = authenticateWithPassword({
+      email: body.email,
+      password: body.password,
+      userAgent: req.headers["user-agent"] || "",
+      ip: clientIp(req)
+    });
+    setSessionCookie(res, auth.sessionToken, auth.session.expiresAt);
+    const challenge = auth.requires2fa ? startMfaChallenge(auth.userId, { channel: body.channel || "app", purpose: "login" }) : null;
+    return json(res, 201, { userId: auth.userId, email: authUser.email, recoveryCodes: authUser.recoveryCodes, session: auth.session, sessionToken: auth.sessionToken, requires2fa: auth.requires2fa, challenge });
+  }
+
   if (pathname === "/api/auth/login") {
     if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
     const body = await parseBody(readBody, req);
-    const auth = createSession(userId, {
-      email: body.email || "",
-      userAgent: req.headers["user-agent"] || "",
-      ip: req.socket?.remoteAddress || "",
-      mfaVerified: false
-    });
-    const challenge = startMfaChallenge(userId, { channel: body.channel || "app", purpose: "login" });
-    return json(res, 200, { userId, ...auth, requires2fa: true, challenge });
+    checkRateLimit({ key: `auth-login:${clientIp(req)}:${String(body.email || "").toLowerCase()}`, limit: 10, windowMs: 15 * 60_000 });
+    const usePasswordAuth = Boolean(body.password || String(process.env.REQUIRE_AUTH || "").toLowerCase() === "true");
+    const auth = usePasswordAuth
+      ? authenticateWithPassword({ email: body.email, password: body.password, userAgent: req.headers["user-agent"] || "", ip: clientIp(req) })
+      : { userId, ...createSession(userId, {
+        email: body.email || "",
+        userAgent: req.headers["user-agent"] || "",
+        ip: clientIp(req),
+        mfaVerified: false
+      }), requires2fa: true };
+    setSessionCookie(res, auth.sessionToken, auth.session.expiresAt);
+    const challenge = auth.requires2fa !== false ? startMfaChallenge(auth.userId || userId, { channel: body.channel || "app", purpose: "login" }) : null;
+    return json(res, 200, { userId: auth.userId || userId, session: auth.session, sessionToken: auth.sessionToken, requires2fa: auth.requires2fa !== false, challenge });
+  }
+
+  if (pathname === "/api/auth/password-reset/start") {
+    if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+    const body = await parseBody(readBody, req);
+    checkRateLimit({ key: `password-reset:${clientIp(req)}:${String(body.email || "").toLowerCase()}`, limit: 6, windowMs: 60 * 60_000 });
+    return json(res, 200, startPasswordReset({ email: body.email }));
+  }
+
+  if (pathname === "/api/auth/password-reset/complete") {
+    if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+    const body = await parseBody(readBody, req);
+    checkRateLimit({ key: `password-reset-complete:${clientIp(req)}:${String(body.email || "").toLowerCase()}`, limit: 8, windowMs: 60 * 60_000 });
+    return json(res, 200, completePasswordReset({ email: body.email, resetToken: body.resetToken, password: body.password }));
   }
 
   if (pathname === "/api/auth/2fa/start") {
@@ -208,9 +289,18 @@ export async function handleProductApiRoute({ req, res, url, json, readBody, use
     }));
   }
 
+  if (pathname === "/api/auth/2fa/recovery") {
+    if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+    const body = await parseBody(readBody, req);
+    checkRateLimit({ key: `mfa-recovery:${clientIp(req)}:${userId}`, limit: 8, windowMs: 60 * 60_000 });
+    return json(res, 200, verifyRecoveryCode(userId, { code: body.code, sessionToken: body.sessionToken || bearerToken(req) }));
+  }
+
   if (pathname === "/api/auth/logout") {
     if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
-    return json(res, 200, revokeSession(userId, bearerToken(req)));
+    const result = revokeSession(userId, bearerToken(req));
+    clearSessionCookie(res);
+    return json(res, 200, result);
   }
 
   if (pathname === "/api/agent/summary") {
@@ -365,6 +455,11 @@ export async function handleProductApiRoute({ req, res, url, json, readBody, use
     return json(res, 200, { auditLog: readAuditLog(userId).slice(0, Number(searchParams.get("limit") || 50)) });
   }
 
+  if (pathname === "/api/compliance/answer-audits") {
+    if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
+    return json(res, 200, { answerAudits: listAssistantAnswerAudits(userId, { limit: Number(searchParams.get("limit") || 50) }) });
+  }
+
   if (pathname === "/api/timeline") {
     if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
     const limit = Math.min(50, Math.max(1, Number(searchParams.get("limit") || 8)));
@@ -399,6 +494,19 @@ export async function handleProductApiRoute({ req, res, url, json, readBody, use
   if (pathname === "/api/jobs/status") {
     if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
     return json(res, 200, queueStatus());
+  }
+
+  if (pathname === "/api/jobs") {
+    if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
+    return json(res, 200, { jobs: listJobs(userId, { limit: Number(searchParams.get("limit") || 50), status: searchParams.get("status") || "all" }) });
+  }
+
+  const jobMatch = routeMatch(pathname, /^\/api\/jobs\/([^/]+)$/);
+  if (jobMatch) {
+    if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
+    const job = getJob(userId, jobMatch[0]);
+    if (!job) return json(res, 404, { error: "Job not found" });
+    return json(res, 200, { job });
   }
 
   if (pathname === "/api/security/sign-out-all") {
@@ -437,10 +545,26 @@ export async function handleProductApiRoute({ req, res, url, json, readBody, use
     return json(res, 200, { requests: listDeletionRequests({ status: searchParams.get("status") || "all" }) });
   }
 
+  if (pathname === "/api/admin/compliance-cases") {
+    if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
+    return json(res, 200, { cases: listComplianceCases({ status: searchParams.get("status") || "all" }) });
+  }
+
+  if (pathname === "/api/admin/monitoring") {
+    if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" });
+    return json(res, 200, monitoringStatus({ userId: searchParams.get("userId") || "" }));
+  }
+
   const adminDeletionMatch = routeMatch(pathname, /^\/api\/admin\/deletion-requests\/([^/]+)$/);
   if (adminDeletionMatch) {
     if (req.method !== "PATCH") return json(res, 405, { error: "Method not allowed" });
     return json(res, 200, { request: updateDeletionRequest(adminDeletionMatch[0], await parseBody(readBody, req)) });
+  }
+
+  const adminComplianceMatch = routeMatch(pathname, /^\/api\/admin\/compliance-cases\/([^/]+)$/);
+  if (adminComplianceMatch) {
+    if (req.method !== "PATCH") return json(res, 405, { error: "Method not allowed" });
+    return json(res, 200, { case: updateComplianceCase(adminComplianceMatch[0], await parseBody(readBody, req)) });
   }
 
   return false;

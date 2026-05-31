@@ -1,5 +1,6 @@
 import { isoNow } from "../utils/values.js";
 import {
+  appendAuditEvent,
   newId,
   readPortfolio,
   readNotificationDeliveries,
@@ -13,9 +14,11 @@ const CHANNEL_ENV = {
 
 function deliveryProvider(channel, destination = "") {
   if (channel === "email_summary") {
-    if (process.env.EMAILJS_SERVICE_ID && process.env.EMAILJS_TEMPLATE_ID && process.env.EMAILJS_PUBLIC_KEY && destination) return "emailjs";
     if (process.env.RESEND_API_KEY && destination) return "resend";
     if (process.env.SENDGRID_API_KEY && destination) return "sendgrid";
+    if (process.env.POSTMARK_SERVER_TOKEN && destination) return "postmark";
+    if (process.env.AWS_SES_REGION && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && destination) return "aws_ses";
+    if (process.env.EMAILJS_SERVICE_ID && process.env.EMAILJS_TEMPLATE_ID && process.env.EMAILJS_PUBLIC_KEY && destination) return "emailjs";
     if (process.env.EMAIL_WEBHOOK_URL) return "webhook";
     return "dry_run";
   }
@@ -109,6 +112,99 @@ async function sendWithSendGrid(delivery) {
   if (!response.ok) throw new Error(`SendGrid failed with status ${response.status}`);
 }
 
+async function sendWithPostmark(delivery) {
+  const response = await fetch("https://api.postmarkapp.com/email", {
+    method: "POST",
+    headers: {
+      "X-Postmark-Server-Token": process.env.POSTMARK_SERVER_TOKEN,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      From: process.env.EMAIL_FROM || "alerts@example.com",
+      To: delivery.destination,
+      Subject: deliverySubject(delivery),
+      TextBody: deliveryMessage(delivery),
+      MessageStream: process.env.POSTMARK_MESSAGE_STREAM || "outbound"
+    })
+  });
+  if (!response.ok) throw new Error(`Postmark failed with status ${response.status}`);
+}
+
+async function sha256Hex(value) {
+  const { createHash } = await import("node:crypto");
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function hmacSha256(key, value, output = undefined) {
+  const { createHmac } = await import("node:crypto");
+  return createHmac("sha256", key).update(value).digest(output);
+}
+
+async function awsSigningKey(secretKey, dateStamp, region, service) {
+  const kDate = await hmacSha256(Buffer.from(`AWS4${secretKey}`, "utf8"), dateStamp);
+  const kRegion = await hmacSha256(kDate, region);
+  const kService = await hmacSha256(kRegion, service);
+  return hmacSha256(kService, "aws4_request");
+}
+
+function awsTimestamp(date = new Date()) {
+  const basic = date.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  return { amzDate: basic, dateStamp: basic.slice(0, 8) };
+}
+
+async function sendWithAwsSes(delivery) {
+  const region = process.env.AWS_SES_REGION;
+  const accessKey = process.env.AWS_ACCESS_KEY_ID;
+  const secretKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const sessionToken = process.env.AWS_SESSION_TOKEN || "";
+  const host = `email.${region}.amazonaws.com`;
+  const path = "/v2/email/outbound-emails";
+  const endpoint = `https://${host}${path}`;
+  const body = JSON.stringify({
+    FromEmailAddress: process.env.EMAIL_FROM || "alerts@example.com",
+    Destination: { ToAddresses: [delivery.destination] },
+    Content: {
+      Simple: {
+        Subject: { Data: deliverySubject(delivery), Charset: "UTF-8" },
+        Body: { Text: { Data: deliveryMessage(delivery), Charset: "UTF-8" } }
+      }
+    }
+  });
+  const { amzDate, dateStamp } = awsTimestamp();
+  const canonicalHeaders = [
+    "content-type:application/json",
+    `host:${host}`,
+    `x-amz-date:${amzDate}`,
+    sessionToken ? `x-amz-security-token:${sessionToken}` : null
+  ].filter(Boolean).join("\n") + "\n";
+  const signedHeaders = ["content-type", "host", "x-amz-date", sessionToken ? "x-amz-security-token" : null].filter(Boolean).join(";");
+  const scope = `${dateStamp}/${region}/ses/aws4_request`;
+  const canonicalRequest = [
+    "POST",
+    path,
+    "",
+    canonicalHeaders,
+    signedHeaders,
+    await sha256Hex(body)
+  ].join("\n");
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    scope,
+    await sha256Hex(canonicalRequest)
+  ].join("\n");
+  const signingKey = await awsSigningKey(secretKey, dateStamp, region, "ses");
+  const signature = await hmacSha256(signingKey, stringToSign, "hex");
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Amz-Date": amzDate,
+    Authorization: `AWS4-HMAC-SHA256 Credential=${accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
+  };
+  if (sessionToken) headers["X-Amz-Security-Token"] = sessionToken;
+  const response = await fetch(endpoint, { method: "POST", headers, body });
+  if (!response.ok) throw new Error(`AWS SES failed with status ${response.status}`);
+}
+
 function plainEmailText(value = "", fallback = "") {
   return String(value || fallback)
     .replace(/\*\*([^*]+)\*\*/g, "$1")
@@ -186,6 +282,16 @@ export async function flushNotificationDeliveries(userId, { limit = 20 } = {}) {
         delivery.status = "delivered";
         delivery.deliveredAt = isoNow();
         delivery.error = "";
+      } else if (delivery.provider === "postmark") {
+        await sendWithPostmark(delivery);
+        delivery.status = "delivered";
+        delivery.deliveredAt = isoNow();
+        delivery.error = "";
+      } else if (delivery.provider === "aws_ses") {
+        await sendWithAwsSes(delivery);
+        delivery.status = "delivered";
+        delivery.deliveredAt = isoNow();
+        delivery.error = "";
       } else if (webhook) {
         await postWebhook(webhook, { userId, delivery });
         delivery.status = "delivered";
@@ -201,6 +307,14 @@ export async function flushNotificationDeliveries(userId, { limit = 20 } = {}) {
     } catch (error) {
       delivery.status = delivery.attempts >= 3 ? "failed" : "retry";
       delivery.error = error.message;
+      appendAuditEvent(userId, {
+        type: "notification_delivery_failed",
+        deliveryId: delivery.id,
+        provider: delivery.provider,
+        channel: delivery.channel,
+        status: delivery.status,
+        error: error.message
+      });
     }
   }
   writeNotificationDeliveries(userId, deliveries);

@@ -230,6 +230,71 @@ export async function initialiseDataStore() {
     );
     CREATE INDEX IF NOT EXISTS idx_user_records_user ON user_records(user_id);
   `);
+  await postgresClient.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE,
+      display_name TEXT,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS pension_accounts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      provider TEXT,
+      account_type TEXT,
+      pot_value NUMERIC,
+      annual_charge_pct NUMERIC,
+      source TEXT,
+      status TEXT,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS pension_documents (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      provider TEXT,
+      document_type TEXT,
+      status TEXT,
+      confidence TEXT,
+      extracted_facts JSONB,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS user_actions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      priority TEXT,
+      status TEXT,
+      source_key TEXT,
+      title TEXT,
+      detail TEXT,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS user_notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      priority TEXT,
+      status TEXT,
+      title TEXT,
+      body TEXT,
+      channels TEXT[],
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      event_type TEXT,
+      event_payload JSONB,
+      occurred_at TIMESTAMPTZ DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_pension_accounts_user ON pension_accounts(user_id);
+    CREATE INDEX IF NOT EXISTS idx_pension_documents_user ON pension_documents(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_actions_user_status ON user_actions(user_id, status);
+    CREATE INDEX IF NOT EXISTS idx_user_notifications_user_status ON user_notifications(user_id, status);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_user_time ON audit_events(user_id, occurred_at DESC);
+  `);
   const rows = await postgresClient.query("SELECT user_id, record_name, json FROM user_records");
   postgresCache = new Map(rows.rows.map((row) => [postgresKey(row.user_id, row.record_name), row.json]));
   postgresReady = true;
@@ -357,7 +422,10 @@ export function dataPathsForUser(userId) {
     actions: fileFor(safeUserId, "actions.json"),
     notifications: fileFor(safeUserId, "notifications.json"),
     notificationPreferences: fileFor(safeUserId, "notification-preferences.json"),
-    auditLog: fileFor(safeUserId, "audit-log.json")
+    auditLog: fileFor(safeUserId, "audit-log.json"),
+    assistantAnswerAudits: fileFor(safeUserId, "assistant-answer-audits.json"),
+    complianceCases: fileFor(safeUserId, "compliance-cases.json"),
+    jobs: fileFor(safeUserId, "jobs.json")
   };
 }
 
@@ -377,6 +445,72 @@ export function readMfaChallenges(userId) {
 export function writeMfaChallenges(userId, challenges = []) {
   writeJson(fileFor(userId, "mfa-challenges.json"), challenges);
   return clone(challenges);
+}
+
+export function readAuthUsers() {
+  return readJson(join(DATA_ROOT, "auth-users.json"), {});
+}
+
+export function writeAuthUsers(users = {}) {
+  writeJson(join(DATA_ROOT, "auth-users.json"), users);
+  return clone(users);
+}
+
+export function readPasswordResets(userId) {
+  return readJson(fileFor(userId, "password-resets.json"), []);
+}
+
+export function writePasswordResets(userId, resets = []) {
+  writeJson(fileFor(userId, "password-resets.json"), resets);
+  return clone(resets);
+}
+
+export function readAssistantAnswerAudits(userId) {
+  return readJson(fileFor(userId, "assistant-answer-audits.json"), []);
+}
+
+export function writeAssistantAnswerAudits(userId, audits = []) {
+  writeJson(fileFor(userId, "assistant-answer-audits.json"), audits);
+  return clone(audits);
+}
+
+export function readComplianceCases(userId) {
+  return readJson(fileFor(userId, "compliance-cases.json"), []);
+}
+
+export function writeComplianceCases(userId, cases = []) {
+  writeJson(fileFor(userId, "compliance-cases.json"), cases);
+  return clone(cases);
+}
+
+export function readJobs(userId) {
+  return readJson(fileFor(userId, "jobs.json"), []);
+}
+
+export function writeJobs(userId, jobs = []) {
+  writeJson(fileFor(userId, "jobs.json"), jobs);
+  return clone(jobs);
+}
+
+export function readSystemEvents() {
+  return readJson(join(DATA_ROOT, "system-events.json"), []);
+}
+
+export function writeSystemEvents(events = []) {
+  writeJson(join(DATA_ROOT, "system-events.json"), events);
+  return clone(events);
+}
+
+export function appendSystemEvent(event = {}) {
+  const events = readSystemEvents();
+  const entry = {
+    id: newId("sys"),
+    occurredAt: isoNow(),
+    ...event
+  };
+  events.unshift(entry);
+  writeSystemEvents(events.slice(0, 500));
+  return clone(entry);
 }
 
 export function readDeletionRequests(userId) {
@@ -435,6 +569,7 @@ export function storageStatus() {
     mode: usesPostgresStore() ? "postgres" : usesSqliteStore() ? "sqlite" : "json",
     postgresConfigured: usesPostgresStore() ? Boolean(process.env.DATABASE_URL) : false,
     postgresReady: usesPostgresStore() ? postgresReady : false,
+    relationalSchema: usesPostgresStore() ? "users,pension_accounts,pension_documents,user_actions,user_notifications,audit_events" : "not_applicable",
     sqliteDatabase: usesSqliteStore() ? SQLITE_DB_PATH : null,
     knownUsers: listKnownUsers()
   };

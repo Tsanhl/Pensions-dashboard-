@@ -1,3 +1,5 @@
+export const ASSISTANT_PROMPT_VERSION = "2026-05-31-production-audit";
+
 export function buildAssistantInstructions({ providerLabel = "server assistant", model = "server configured model", currentSourceNote = "Current-source status not supplied.", riskProfile = "" } = {}) {
   return `You are the personal assistant inside a UK pensions dashboard. The product is a personalised dashboard: users expect portfolio-linked financial, pensions and legal-reference suggestions when they ask for them.
 

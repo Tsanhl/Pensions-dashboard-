@@ -2,11 +2,29 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAgentSummaryForDashboard } from "../server/services/agentService.js";
 import { escalateActionsForAssistantQuestion, questionDependencyWarning, syncActionsFromAgent } from "../server/services/actionService.js";
-import { createSession, getSession, startMfaChallenge, verifyMfaChallenge } from "../server/services/authService.js";
-import { complianceMetadata } from "../server/services/complianceService.js";
+import {
+  authenticateWithPassword,
+  completePasswordReset,
+  createAuthUser,
+  createSession,
+  getSession,
+  startMfaChallenge,
+  startPasswordReset,
+  verifyMfaChallenge,
+  verifyRecoveryCode
+} from "../server/services/authService.js";
+import {
+  complianceMetadata,
+  createComplianceCaseIfNeeded,
+  listAssistantAnswerAudits,
+  listComplianceCases,
+  recordAssistantAnswerAudit,
+  updateComplianceCase
+} from "../server/services/complianceService.js";
 import { requestDataDeletion, listDeletionRequests, updateDeletionRequest } from "../server/services/adminWorkflowService.js";
 import { createNotification, listNotifications } from "../server/services/notificationService.js";
 import { flushNotificationDeliveries, listNotificationDeliveries } from "../server/services/notificationDeliveryService.js";
+import { addJob, getJob, runJob } from "../server/services/jobQueueService.js";
 import { readActions, storageStatus, writeActions, writePortfolio } from "../server/store/userDataStore.js";
 import { validateRiskProfileInput } from "../server/utils/validation.js";
 
@@ -106,6 +124,32 @@ test("SQLite-backed auth session and 2FA flow works", () => {
   assert.equal(storageStatus().mode, "sqlite");
 });
 
+test("password auth supports login lockout reset and recovery codes", () => {
+  const userId = `test-password-${Date.now()}`;
+  const email = `${userId}@example.com`;
+  const created = createAuthUser(userId, { email, password: "Strongpass123", displayName: "Test User" });
+  assert.equal(created.userId, userId);
+  assert.ok(created.recoveryCodes.length >= 1);
+
+  const login = authenticateWithPassword({ email, password: "Strongpass123" });
+  assert.equal(login.userId, userId);
+  assert.equal(login.requires2fa, true);
+  const recovered = verifyRecoveryCode(userId, { code: created.recoveryCodes[0], sessionToken: login.sessionToken });
+  assert.equal(recovered.verified, true);
+  assert.equal(getSession(userId, login.sessionToken).mfaVerified, true);
+
+  for (let i = 0; i < 5; i += 1) {
+    assert.throws(() => authenticateWithPassword({ email, password: "Wrongpass123" }), /incorrect/);
+  }
+  assert.throws(() => authenticateWithPassword({ email, password: "Strongpass123" }), /temporarily locked/);
+
+  const reset = startPasswordReset({ email });
+  assert.ok(reset.demoResetToken);
+  const completed = completePasswordReset({ email, resetToken: reset.demoResetToken, password: "Newstrong123" });
+  assert.equal(completed.reset, true);
+  assert.equal(authenticateWithPassword({ email, password: "Newstrong123" }).userId, userId);
+});
+
 test("data deletion request uses admin workflow", () => {
   const userId = `test-delete-${Date.now()}`;
   const request = requestDataDeletion(userId, { reason: "test" });
@@ -113,6 +157,45 @@ test("data deletion request uses admin workflow", () => {
   assert.ok(listDeletionRequests({ status: "pending" }).some((item) => item.id === request.id));
   const reviewed = updateDeletionRequest(request.id, { status: "approved", adminNote: "approved in test" });
   assert.equal(reviewed.status, "approved");
+});
+
+test("assistant answer audit and compliance case workflow", () => {
+  const userId = `test-compliance-${Date.now()}`;
+  const meta = complianceMetadata({ provider: "local", model: "server-portfolio-linked", usedSearch: false });
+  const audit = recordAssistantAnswerAudit(userId, {
+    question: "Can I transfer my OneLife pension and could I lose guarantees?",
+    answer: "Check guarantees before acting.",
+    provider: "local",
+    model: "server-portfolio-linked",
+    usedSearch: false,
+    currentSourceNote: "No live source check.",
+    compliance: meta,
+    dashboard,
+    dataUsed: ["dashboard snapshot"],
+    dependencyWarning: "Before relying on this answer, upload or confirm OneLife statement."
+  });
+  assert.ok(audit.id);
+  assert.equal(listAssistantAnswerAudits(userId).length, 1);
+  const complianceCase = createComplianceCaseIfNeeded(userId, {
+    question: audit.question,
+    provider: audit.provider,
+    model: audit.model,
+    usedSearch: audit.usedSearch,
+    answerAuditId: audit.id
+  });
+  assert.equal(complianceCase.status, "open");
+  assert.ok(listComplianceCases({ status: "open" }).some((item) => item.id === complianceCase.id));
+  const updated = updateComplianceCase(complianceCase.id, { status: "reviewing", adminNote: "Needs human review" });
+  assert.equal(updated.status, "reviewing");
+});
+
+test("document scan jobs move through persisted queue lifecycle", async () => {
+  const userId = `test-job-${Date.now()}`;
+  const job = addJob(userId, { type: "document_scan", payload: { fileName: "statement.pdf" } });
+  assert.equal(job.status, "queued");
+  const completed = await runJob(userId, job.id, async () => ({ documentId: "doc_1", confidence: "High" }));
+  assert.equal(completed.status, "completed");
+  assert.equal(getJob(userId, job.id).result.documentId, "doc_1");
 });
 
 test("notification provider queues and dry-runs external delivery", async () => {
