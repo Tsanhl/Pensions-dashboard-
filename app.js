@@ -282,7 +282,10 @@ function metricCard({ icon, iconClass = "", label, value, sub, warning = false }
 
 function actionVisibleToUser(action = {}) {
   const text = `${action.sourceKey || ""} ${action.category || ""} ${action.title || ""} ${action.detail || ""}`.toLowerCase();
-  return !/risk_profile_missing|risk profile/.test(text);
+  if (/risk_profile_missing|risk profile|high_charge|charge to check|target_gap|monthly gap|review target gap|dashboard_checked|planning data updated|urgent task email test|urgent action test/.test(text)) {
+    return false;
+  }
+  return /\b(data_quality|documents?|manual|statement|upload|confirm|missing|stale|provider|forecast|add details)\b/.test(text);
 }
 
 function userVisibleActions() {
@@ -1555,26 +1558,16 @@ function wireEvents() {
 }
 
 function renderAlerts() {
-  const activeNotifications = app.notifications || [];
+  const activeTasks = userVisibleActions();
   const badge = $(".notification-badge");
-  if (badge) badge.textContent = String(Math.min(99, activeNotifications.length || 0));
-  $("#alert-list").innerHTML = activeNotifications.length ? activeNotifications.slice(0, 5).map((notification) => `<div class="notification-row ${escapeHtml(notification.status)}">
-    <button class="status-row" type="button" data-view="${escapeHtml(notification.linkedView || "overview")}"><span class="status-icon ${notification.priority === "high" ? "red" : "blue"}" aria-hidden="true">${escapeHtml(notification.priority === "high" ? "!" : itemIcon(notification.category))}</span><span><strong>${escapeHtml(notification.title)}</strong><small>${escapeHtml(notification.body || "")}</small></span><span aria-hidden="true">›</span></button>
-    <div class="notification-actions"><button class="inline-link small danger-link" type="button" data-notification-dismiss="${escapeHtml(notification.id)}">Dismiss</button></div>
-  </div>`).join("") : [
-    statusRow("!", "amber", "1 document needs review", "Confirm extracted fields before saving.", "documents"),
-    statusRow("!", "amber", "1 account charge to check", "One account has a higher annual charge.", "pensions"),
-    statusRow("i", "blue", "State Pension kept separate", "Shown as income, not pot value.", "target")
-  ].join("");
+  if (badge) badge.textContent = String(Math.min(99, activeTasks.length || 0));
+  $("#alert-list").innerHTML = activeTasks.length ? activeTasks.map((action) => `<div class="notification-row ${escapeHtml(action.priority || "medium")}">
+    <button class="status-row" type="button" data-view="${escapeHtml(action.linkedView || "overview")}"><span class="status-icon ${action.priority === "high" ? "red" : "blue"}" aria-hidden="true">${escapeHtml(action.priority === "high" ? "!" : itemIcon(action.category))}</span><span><strong>${escapeHtml(action.title)}</strong><small>${escapeHtml(action.detail || "")}</small></span><span aria-hidden="true">›</span></button>
+    <div class="notification-actions"><button class="inline-link small danger-link" type="button" data-action-done="${escapeHtml(action.id)}">Dismiss</button></div>
+  </div>`).join("") : `<p class="subtle">No tasks need action.</p>`;
   const preview = $("#phone-preview");
   if (preview) {
-    const top = activeNotifications[0];
-    preview.innerHTML = top ? `<div class="phone-preview-title">Phone push preview</div>
-      <div class="phone-card">
-        <span class="phone-app-icon">P</span>
-        <span><strong>Pension Plan</strong><small>now</small></span>
-        <p>${escapeHtml(top.title)} — ${escapeHtml(top.body || "Open the dashboard to review this item.")}</p>
-      </div>` : `<div class="phone-preview-title">Phone push preview</div><div class="phone-card muted"><span class="phone-app-icon">P</span><p>No active alerts to send.</p></div>`;
+    preview.innerHTML = "";
   }
 }
 

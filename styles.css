@@ -246,6 +246,17 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   background: var(--surface);
   box-shadow: var(--shadow);
 }
+.alerts-popover {
+  max-height: min(78vh, 680px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+.alerts-popover #alert-list {
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
 .account-popover { width: min(420px, calc(100vw - 40px)); }
 .account-switch-list { display: grid; gap: 10px; margin: 14px 0; }
 .account-switch-row {
