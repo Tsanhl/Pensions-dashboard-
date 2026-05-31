@@ -289,6 +289,17 @@ function userVisibleActions() {
   return Array.isArray(app.actions) ? app.actions.filter(actionVisibleToUser) : [];
 }
 
+function hasUrgentUserAction() {
+  return userVisibleActions().some((action) => action.priority === "high");
+}
+
+function renderUrgentActionPills() {
+  const show = hasUrgentUserAction();
+  $all("[data-urgent-action-pill]").forEach((pill) => {
+    pill.classList.toggle("hidden", !show);
+  });
+}
+
 function renderOverview() {
   const p = app.portfolio;
   $("#overview-metrics").innerHTML = [
@@ -1580,6 +1591,7 @@ function renderAll() {
   renderSettings();
   renderActionCentre();
   renderAlerts();
+  renderUrgentActionPills();
   applyBindings();
 }
 
