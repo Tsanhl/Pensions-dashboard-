@@ -823,10 +823,10 @@ function renderDocuments() {
   const selected = app.lastExtraction || docs[0]?.extracted || {};
   renderFacts(selected);
   $("#review-steps").innerHTML = [
-    ["1", "Upload a document", "Upload a pension letter or statement in PDF, JPG or PNG format."],
-    ["2", "Check extracted facts", "We extract key details for you to review and confirm."],
-    ["3", "Save confirmed values", "Save the facts to keep your records accurate."]
-  ].map(([num, title, text]) => `<div class="review-step"><span class="step-num">${num}</span><span><strong>${escapeHtml(title)}</strong><p>${escapeHtml(text)}</p></span></div>`).join("");
+    ["1", "Upload statement", "PDF, JPG or PNG."],
+    ["2", "Check key facts", "Provider, policy number, pot value, charges and contribution rates."],
+    ["3", "Save confirmed data", "Dashboard projections and assistant answers use the confirmed values."]
+  ].map(([num, title, text]) => `<div class="review-step"><span class="step-num">${num}</span><span class="review-step-copy"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(text)}</p></span></div>`).join("");
 }
 
 function renderFacts(extracted = {}) {
