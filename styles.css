@@ -747,7 +747,7 @@ h1, h2, h3, p { margin-top: 0; }
 }
 .drop-zone.dragging { border-color: var(--blue); background: #f1f7ff; }
 .upload-icon { color: var(--blue); font-size: 2.1rem; line-height: 1; }
-.center-note { text-align: center; margin: 14px 0 0; }
+.center-note { text-align: center; margin: 22px 0 0; }
 .scan-status { text-align: center; margin: 10px 0 0; min-height: 20px; }
 .documents-list-card, .extracted-card { grid-column: 1; }
 .review-steps-card, .why-review-card { grid-column: 2; }
@@ -1968,7 +1968,7 @@ textarea,
 
 .current-style-card .investment-context-panel strong {
   display: block;
-  font-size: clamp(1.85rem, 2.4vw, 2.4rem);
+  font-size: clamp(1.62rem, 2.05vw, 2.08rem);
   line-height: 1.05;
 }
 
@@ -2286,6 +2286,10 @@ body {
 .metric-card strong {
   font-size: clamp(1.55rem, 2vw, 2.05rem);
   line-height: 1.05;
+}
+
+#investment-metrics .metric-card:first-child strong {
+  font-size: clamp(1.42rem, 1.75vw, 1.82rem);
 }
 
 .projection-metric-card strong {
