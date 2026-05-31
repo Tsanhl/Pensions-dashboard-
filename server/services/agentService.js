@@ -179,7 +179,7 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
       "Review target gap",
       "The projection still falls short of the monthly target, so contributions, retirement age, investment route and assumptions should be reviewed.",
       "target",
-      { monthlyGap: dashboard.monthlyGap, monthlyTarget: dashboard.monthlyTarget }
+      { monthlyGap: dashboard.monthlyGap, monthlyTarget: dashboard.monthlyTarget, actionable: false }
     ));
   }
 
@@ -207,10 +207,10 @@ export function buildAgentSummaryForDashboard({ dashboard, riskProfile = {}, exi
   }
 
   const actionCandidates = checks
-    .filter((item) => item.severity !== "low")
+    .filter((item) => item.severity !== "low" && item.meta?.actionable !== false)
     .map(actionCandidateFromCheck);
   const notificationCandidates = checks
-    .filter((item) => item.severity === "high" || item.severity === "medium")
+    .filter((item) => item.meta?.actionable !== false && (item.severity === "high" || item.severity === "medium"))
     .map(notificationCandidateFromCheck);
   const candidateActions = sortActions(actionCandidates.map((candidate) => ({
     ...candidate,

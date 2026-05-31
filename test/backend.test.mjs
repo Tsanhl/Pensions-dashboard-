@@ -45,6 +45,7 @@ test("agent returns next best action and assistant context", () => {
   assert.match(summary.assistantContext.summary, /Risk profile: missing/);
   assert.ok(summary.actionCandidates.some((action) => action.sourceKey === "document_review_required"));
   assert.ok(!summary.actionCandidates.some((action) => action.sourceKey === "risk_profile_missing"));
+  assert.ok(!summary.actionCandidates.some((action) => action.sourceKey === "target_gap_open"));
 });
 
 test("compliance metadata keeps advice boundary explicit", () => {
