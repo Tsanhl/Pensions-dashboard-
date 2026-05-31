@@ -2652,3 +2652,59 @@ body {
   border-color: var(--blue);
   background: var(--blue-3);
 }
+
+/* UI spacing refinement: tighter checklist cards and cleaner page endings. */
+:root {
+  --ui-card-gap: 16px;
+  --space-section: 22px;
+}
+
+.main {
+  padding-bottom: 42px;
+}
+
+.view > :last-child,
+.view > .dashboard-grid:last-child,
+.view > .metric-grid:last-child,
+.view > .documents-grid:last-child,
+.view > .assistant-layout:last-child,
+.view > .settings-grid:last-child,
+.view > .projection-lower-grid:last-child,
+.view > .contribution-grid:last-child {
+  margin-bottom: 0;
+}
+
+.side-card {
+  align-self: start;
+}
+
+.side-card .card-title-row {
+  margin-bottom: 14px !important;
+}
+
+.side-card .check-list {
+  gap: 12px;
+}
+
+.side-card .check-list li {
+  gap: 2px;
+  padding-left: 16px;
+}
+
+.side-card .check-list li::before {
+  top: 8px;
+}
+
+.side-card .inline-link {
+  display: inline-flex;
+  gap: 4px;
+  width: fit-content;
+  padding-top: 0;
+  margin-top: 2px;
+}
+
+@media (max-width: 780px) {
+  .main {
+    padding-bottom: 32px;
+  }
+}
